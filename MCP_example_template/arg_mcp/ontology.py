@@ -151,6 +151,15 @@ class Ontology:
             })
         return out
 
+    def scheme_requirements(self, scheme: str) -> List[str]:
+        mapping = {
+            "Argument from Cause to Effect": ["temporal_order", "mechanism", "confound_control"],
+            "Argument from Analogy": ["similarity", "scope"],
+            "Argument from Expert Opinion": ["expertise", "bias", "consensus"],
+            "Practical Reasoning": ["goal_specified"],
+        }
+        return mapping.get(scheme, [])
+
 
 @dataclass
 class ToolRow:
@@ -200,4 +209,3 @@ class ToolCatalog:
             if q in blob:
                 out.append({"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how})
         return out
-

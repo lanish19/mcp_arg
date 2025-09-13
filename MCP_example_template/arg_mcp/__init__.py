@@ -1,7 +1,7 @@
 from .ontology import Ontology, ToolCatalog, load_ontology, load_tool_catalog
 from .structures import ArgumentNode, ArgumentLink, NodeType, RelationshipType, NodePropertyAssigner
 from .patterns import PatternDetector, Pattern
-from .gap import GapAnalyzer, MissingAssumption
+from .gap import InferenceEngine, RequirementResult, SchemeEvaluation, GapAnalyzer
 from .probes import ProbeOrchestrator
 from .engine import AnalysisEngine, AnalysisContext
 
@@ -17,8 +17,10 @@ __all__ = [
     "NodePropertyAssigner",
     "PatternDetector",
     "Pattern",
+    "InferenceEngine",
+    "RequirementResult",
+    "SchemeEvaluation",
     "GapAnalyzer",
-    "MissingAssumption",
     "ProbeOrchestrator",
     "AnalysisEngine",
     "AnalysisContext",

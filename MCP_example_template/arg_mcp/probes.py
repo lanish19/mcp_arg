@@ -65,10 +65,16 @@ class ProbeOrchestrator:
                 rest.append(p)
         return order + rest
 
-    def chain_probes_conditionally(self, initial_findings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def chain_probes_conditionally(self, initial_findings: Dict[str, Any], profile=None) -> List[Dict[str, Any]]:
         # Build a conditional chain of probe suggestions
         patterns = initial_findings.get("patterns", [])
         probes = self.select_probes_by_pattern(patterns)
+        if profile is not None:
+            for name in profile.preferred_probes:
+                meta = self.tools.get(name)
+                if meta:
+                    probes.insert(0, meta)
+
         ranked = self.prioritize_by_context(
             probes,
             initial_findings.get("forum"),

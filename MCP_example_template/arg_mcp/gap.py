@@ -1,95 +1,130 @@
 from __future__ import annotations
 
+"""Dynamic inference rule engine for argument schemes."""
+
 from dataclasses import dataclass
-from typing import List, Dict, Any, DefaultDict
+from typing import Callable, Dict, List, Optional
+
+
+@dataclass
+class Requirement:
+    name: str
+    description: str
+    probe: Optional[str] = None
+
+
+@dataclass
+class RequirementResult:
+    requirement: Requirement
+    satisfied: bool
+    score: float
+    evidence: List[str]
+    missing_premise: Optional[str] = None
+
 
 
 @dataclass
 class MissingAssumption:
+    """Legacy container for backward compatibility."""
     text: str
     category: str
     rationale: str
     priority: str  # critical, testable, controversial, other
 
 
-class DynamicGapAnalyzer:
-    """Identify missing assumptions based on detected argument schemes."""
-
-    def __init__(self) -> None:
-        self.templates: Dict[str, List[MissingAssumption]] = {
-            "Argument from Expert Opinion": [
-                MissingAssumption(
-                    text="Expertise relevance and scope alignment",
-                    category="Authority Preconditions",
-                    rationale="Expert’s domain should match the claim’s scope.",
-                    priority="critical",
-                ),
-                MissingAssumption(
-                    text="Bias and conflict-of-interest checked",
-                    category="Authority Preconditions",
-                    rationale="Funding/affiliations may undercut credibility.",
-                    priority="testable",
-                ),
-                MissingAssumption(
-                    text="Consensus and replication status known",
-                    category="Authority Preconditions",
-                    rationale="Single testimony is weaker than replicated consensus.",
-                    priority="controversial",
-                ),
-            ],
-            "Argument from Cause to Effect": [
-                MissingAssumption(
-                    text="No simultaneity or reverse causation",
-                    category="Causal ID",
-                    rationale="Causal phrasing implies temporal precedence and one-way influence.",
-                    priority="critical",
-                ),
-                MissingAssumption(
-                    text="Unmeasured confounding ruled out",
-                    category="Causal ID",
-                    rationale="Association could be driven by omitted variables; require design or control.",
-                    priority="critical",
-                ),
-                MissingAssumption(
-                    text="Mechanism plausibility or pathway specified",
-                    category="Mechanistic",
-                    rationale="Bridges cause to effect; improves transportability and diagnosis of failures.",
-                    priority="testable",
-                ),
-            ],
-            "Argument from Analogy": [
-                MissingAssumption(
-                    text="Similarity dimensions specified and relevant",
-                    category="Analogy Preconditions",
-                    rationale="Analogy requires shared, problem-relevant properties.",
-                    priority="critical",
-                ),
-                MissingAssumption(
-                    text="Scope and limits of analogy stated",
-                    category="Analogy Preconditions",
-                    rationale="Prevents over-generalization beyond justified range.",
-                    priority="testable",
-                ),
-            ],
-            "Practical Reasoning": [
-                MissingAssumption(
-                    text="Goals, constraints, and trade-offs explicit",
-                    category="Practical Reasoning",
-                    rationale="Action claims depend on prioritized values and constraints.",
-                    priority="critical",
-                ),
-            ],
-        }
-
-    def analyze(self, patterns: List[Dict[str, Any]]) -> List[MissingAssumption]:
-        schemes = {p.get("details", {}).get("scheme") or p.get("label") for p in patterns}
-        out: List[MissingAssumption] = []
-        for s in schemes:
-            for tpl in self.templates.get(s, []):
-                out.append(tpl)
-        return out
+RequirementCheck = Callable[[str, Dict[str, str]], RequirementResult]
 
 
-# Backwards compatibility export
-GapAnalyzer = DynamicGapAnalyzer
+def check_temporal_order(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("temporal_order", "Cause must precede effect", probe="timeline_search")
+    cause = roles.get("cause", "")
+    effect = roles.get("effect", "")
+    satisfied = "before" in text.lower() or "precedes" in text.lower()
+    missing = None if satisfied else f"Clarify whether '{cause}' occurs before '{effect}'"
+    return RequirementResult(req, satisfied, 1.0 if satisfied else 0.2, [text], missing)
 
+
+def check_mechanism_presence(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("mechanism", "Mechanism linking cause and effect")
+    satisfied = any(w in text.lower() for w in ["because", "via", "through", "mechanism"])
+    missing = None if satisfied else "Specify mechanism linking cause and effect"
+    return RequirementResult(req, satisfied, 0.9 if satisfied else 0.3, [text], missing)
+
+
+def check_confounds(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("confound_control", "Confounding factors addressed")
+    satisfied = "control" in text.lower() or "random" in text.lower()
+    missing = None if satisfied else "Identify and control potential confounders"
+    return RequirementResult(req, satisfied, 0.8 if satisfied else 0.2, [text], missing)
+
+
+def check_expertise(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("expertise", "Source has relevant expertise")
+    satisfied = any(t in text.lower() for t in ["dr", "prof", "expert"])
+    missing = None if satisfied else "Provide credentials for the cited authority"
+    return RequirementResult(req, satisfied, 0.8 if satisfied else 0.2, [text], missing)
+
+
+def check_bias(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("bias", "Potential bias disclosed")
+    satisfied = "independent" in text.lower() or "unbiased" in text.lower()
+    missing = None if satisfied else "Clarify potential biases of the authority"
+    return RequirementResult(req, satisfied, 0.7 if satisfied else 0.3, [text], missing)
+
+
+def check_analogy_similarity(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("similarity", "Analogy based on relevant similarities")
+    base = roles.get("base", "")
+    target = roles.get("target", "")
+    satisfied = base and target and any(w in text.lower() for w in ["like", "similar", "just as"])
+    missing = None if satisfied else f"Explain why {base} is similar to {target}"
+    return RequirementResult(req, satisfied, 0.9 if satisfied else 0.2, [text], missing)
+
+
+def check_scope(text: str, roles: Dict[str, str]) -> RequirementResult:
+    req = Requirement("scope", "Limits of the analogy are stated")
+    satisfied = "unlike" in text.lower() or "however" in text.lower()
+    missing = None if satisfied else "State disanalogies or scope limits"
+    return RequirementResult(req, satisfied, 0.8 if satisfied else 0.3, [text], missing)
+
+
+SCHEME_CHECKS: Dict[str, List[RequirementCheck]] = {
+    "Argument from Cause to Effect": [check_temporal_order, check_mechanism_presence, check_confounds],
+    "Argument from Expert Opinion": [check_expertise, check_bias],
+    "Argument from Analogy": [check_analogy_similarity, check_scope],
+}
+
+
+@dataclass
+class SchemeEvaluation:
+    scheme: str
+    requirements: List[RequirementResult]
+    confidence: float
+    generated_assumptions: List[str]
+
+
+class InferenceEngine:
+    def __init__(self, ontology, profile) -> None:
+        self.ontology = ontology
+        self.profile = profile
+
+    def evaluate_scheme(self, candidate: Dict[str, str]) -> SchemeEvaluation:
+        scheme = candidate.get("scheme")
+        checks = SCHEME_CHECKS.get(scheme, []) + [self._wrap_extra(r) for r in self.profile.extra_requirements.get(candidate.get("scheme_key", ""), [])]
+        results: List[RequirementResult] = []
+        for chk in checks:
+            results.append(chk(candidate.get("text", ""), candidate.get("roles", {})))
+        conf = sum(r.score for r in results) / len(results) if results else 0.0
+        assumptions = [r.missing_premise for r in results if not r.satisfied and r.missing_premise]
+        return SchemeEvaluation(scheme=scheme or "", requirements=results, confidence=conf, generated_assumptions=assumptions)
+
+    def _wrap_extra(self, name: str) -> RequirementCheck:
+        def _inner(text: str, roles: Dict[str, str]) -> RequirementResult:
+            req = Requirement(name, f"Domain-specific requirement {name}")
+            return RequirementResult(req, False, 0.0, [text], f"Address {name}")
+        return _inner
+
+
+
+# Backwards compatibility exports
+GapAnalyzer = InferenceEngine

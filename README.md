@@ -18,7 +18,9 @@ This repository contains a sophisticated FastMCP server implementation that prov
 │   │   ├── patterns.py          # Pattern detection algorithms
 │   │   ├── structures.py        # Argument structure analysis
 │   │   ├── probes.py            # Diagnostic probe tools
-│   │   └── gap.py               # Gap analysis and assumptions
+│   │   ├── gap.py               # Dynamic inference engine for gaps
+│   │   ├── domain_profiles.py   # Domain adaptation profiles
+│   │   └── validation.py        # Factual, sentiment, plausibility checks
 │   └── FastMCP_Quickstart_Example.md  # Detailed documentation
 ├── argument_tools.csv            # Diagnostic probe tools catalog
 ├── new_argumentation_database_buckets_fixed.csv  # Ontology database
@@ -31,8 +33,10 @@ This repository contains a sophisticated FastMCP server implementation that prov
 
 - **Comprehensive Analysis**: Multi-stage argument breakdown with structured graph generation
 - **Pattern Detection**: Advanced detection of causal, authority, analogical, and other reasoning patterns
-- **Gap Analysis**: Systematic identification of missing assumptions and logical gaps
+- **Gap Analysis**: Dynamic inference rule checks generating scheme-specific missing premises
 - **Quality Assessment**: Framework-based evaluation of argument strengths and weaknesses
+- **Domain Adaptation**: Legal, scientific, policy profiles that adjust requirement weighting
+- **Validation**: Contradiction, sentiment, and plausibility checks for claims and assumptions
 - **Counter-Analysis**: Generation of counter-argument scaffolds and alternative perspectives
 
 ### Ontology Management

@@ -4,11 +4,14 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 import re
 
-from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner
+from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner, ArgumentGraph
+
 from .patterns import PatternDetector, Pattern
-from .gap import GapAnalyzer
+from .gap import InferenceEngine
 from .ontology import Ontology, ToolCatalog
 from .probes import ProbeOrchestrator
+from .domain_profiles import PROFILES, DomainProfile
+from .validation import check_factual_consistency, check_sentiment_coherence, check_plausibility
 
 
 @dataclass
@@ -24,9 +27,13 @@ class AnalysisEngine:
         self.ontology = ontology
         self.tools = tools
         self.detector = PatternDetector(ontology)
-        self.gap = GapAnalyzer()
-        self.probes = ProbeOrchestrator(tools)
         self.assigner = NodePropertyAssigner(ontology)
+        self.probes = ProbeOrchestrator(tools)
+        self.profile: DomainProfile = PROFILES["general"]
+        self.infer = InferenceEngine(ontology, self.profile)
+        # backward compatibility: expose inference engine as 'gap'
+        self.gap = self.infer
+
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:
@@ -79,38 +86,80 @@ class AnalysisEngine:
         return {"patterns": patterns, "nodes": nodes}
 
     # Stage 3: Systematic Gap Analysis
-    def stage3_gaps(self, patterns: List[Dict[str, Any]], nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
-        missing = self.gap.analyze(patterns)
-        # Attach assumptions to main claim if present, else to all nodes
-        main_candidates = [n for n in nodes if n.get("primary_subtype") == "Main Claim"] or nodes
-        for m in missing:
-            main_candidates[0].setdefault("assumptions", []).append(m.text)
-        return {"assumptions": [m.__dict__ for m in missing], "nodes": nodes}
+    def stage3_infer(self, text: str, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        evaluations = []
+        assumptions = []
+        for p in patterns:
+            p = dict(p)
+            p.setdefault("scheme", p.get("details", {}).get("scheme") or p.get("label"))
+            p.setdefault("text", text)
+            eval_res = self.infer.evaluate_scheme(p)
+            evaluations.append(
+                {
+                    "scheme": eval_res.scheme,
+                    "confidence": eval_res.confidence,
+                    "requirements": [
+                        {
+                            "name": r.requirement.name,
+                            "satisfied": r.satisfied,
+                            "score": r.score,
+                            "missing_premise": r.missing_premise,
+                        }
+                        for r in eval_res.requirements
+                    ],
+                }
+            )
+            assumptions.extend(eval_res.generated_assumptions)
+        return {"evaluations": evaluations, "assumptions": assumptions}
 
     # Stage 4: Dynamic Probe Orchestration
     def stage4_probes(self, context: AnalysisContext, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
         initial = {"patterns": patterns, "forum": context.forum, "audience": context.audience, "goal": context.goal}
-        chain = self.probes.chain_probes_conditionally(initial)
+        chain = self.probes.chain_probes_conditionally(initial, profile=self.profile)
         return {"probe_plan": chain}
 
     # Stage 5: Integration and Validation
-    def stage5_integrate(self, text: str, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]], patterns: List[Dict[str, Any]], assumptions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Build light validation and narrative
-        issues = self._validate_graph(nodes, links)
-        narrative = self._build_narrative(text, nodes, patterns, assumptions)
-        return {"validation": issues, "narrative": narrative}
+    def stage5_integrate(self, text: str, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]], patterns: List[Dict[str, Any]], infer_res: Dict[str, Any]) -> Dict[str, Any]:
+        graph = ArgumentGraph()
+        for n in nodes:
+            graph.add_node(ArgumentNode.from_dict(n))
+        for l in links:
+            graph.add_edge(ArgumentLink.from_dict(l))
+        for asm in infer_res["assumptions"]:
+            a_node = ArgumentNode.make("STATEMENT", content=asm, primary_subtype="Assumption")
+            graph.add_node(a_node)
+        structure_issues = graph.validate_structure()
+        claims = [n.get("content", "") for n in nodes]
+        conflicts = check_factual_consistency(claims)
+        senti_issues = check_sentiment_coherence(claims)
+        plaus = [check_plausibility(a) for a in infer_res["assumptions"]]
+        narrative = self._build_narrative(text, nodes, patterns, [{"text": a} for a in infer_res["assumptions"]])
+        return {
+            "graph": graph.to_json(),
+            "validation": {
+                "structure": structure_issues,
+                "contradictions": conflicts,
+                "sentiment_mismatch": senti_issues,
+                "plausibility": plaus,
+            },
+            "narrative": narrative,
+        }
 
     # Public API
     def _run_once(self, text: str, context: AnalysisContext) -> Dict[str, Any]:
+        self.profile = PROFILES.get(context.forum or "general", PROFILES["general"])
+        self.infer.profile = self.profile
         s1 = self.stage1_decompose(text)
         s2 = self.stage2_patterns(text, s1["nodes"])
-        s3 = self.stage3_gaps(s2["patterns"], s2["nodes"])
+        s3 = self.stage3_infer(text, s2["patterns"])
         s4 = self.stage4_probes(context, s2["patterns"])
-        s5 = self.stage5_integrate(text, s3["nodes"], s1["links"], s2["patterns"], s3["assumptions"])
+        s5 = self.stage5_integrate(text, s2["nodes"], s1["links"], s2["patterns"], s3)
+
         return {
             "context": asdict(context),
-            "structure": {"nodes": s3["nodes"], "links": s1["links"]},
+            "structure": {"nodes": s2["nodes"], "links": s1["links"]},
             "patterns": s2["patterns"],
+            "evaluations": s3["evaluations"],
             "assumptions": s3["assumptions"],
             "probes": s4["probe_plan"],
             "integration": s5,
@@ -188,6 +237,7 @@ class AnalysisEngine:
         if assumptions:
             lines.append("Key Assumptions:")
             for a in assumptions[:6]:
-                lines.append(f"- {a['text']} ({a['category']})")
+                cat = a.get('category', '')
+                lines.append(f"- {a['text']}" + (f" ({cat})" if cat else ""))
         return "\n".join(lines)
 
