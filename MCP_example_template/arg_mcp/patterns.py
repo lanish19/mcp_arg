@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from .tfidf import TfidfVectorizer, cosine_similarity
 
 from .ontology import Ontology, OntologyRow
 
