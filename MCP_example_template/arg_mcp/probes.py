@@ -66,12 +66,24 @@ class ProbeOrchestrator:
         return order + rest
 
     def chain_probes_conditionally(self, initial_findings: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # Returns a simple chain (sequence) of probe suggestions with rationale
+        # Build a conditional chain of probe suggestions
         patterns = initial_findings.get("patterns", [])
         probes = self.select_probes_by_pattern(patterns)
-        ranked = self.prioritize_by_context(probes, initial_findings.get("forum"), initial_findings.get("audience"), initial_findings.get("goal"))
+        ranked = self.prioritize_by_context(
+            probes,
+            initial_findings.get("forum"),
+            initial_findings.get("audience"),
+            initial_findings.get("goal"),
+        )
         sequence: List[Dict[str, Any]] = []
+        prev: Optional[str] = None
         for p in ranked:
-            sequence.append({"tool": p, "when": "initial", "rationale": "Selected by detected pattern and forum weighting."})
+            step = {
+                "tool": p,
+                "when": "after " + prev if prev else "initial",
+                "rationale": "Selected by detected pattern and forum weighting.",
+            }
+            sequence.append(step)
+            prev = p["name"]
         return sequence
 

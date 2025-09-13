@@ -4,7 +4,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 import re
 
-from .structures import ArgumentNode, ArgumentLink
+from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner
 from .patterns import PatternDetector, Pattern
 from .gap import GapAnalyzer
 from .ontology import Ontology, ToolCatalog
@@ -23,9 +23,10 @@ class AnalysisEngine:
     def __init__(self, ontology: Ontology, tools: ToolCatalog) -> None:
         self.ontology = ontology
         self.tools = tools
-        self.detector = PatternDetector()
+        self.detector = PatternDetector(ontology)
         self.gap = GapAnalyzer()
         self.probes = ProbeOrchestrator(tools)
+        self.assigner = NodePropertyAssigner(ontology)
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:
@@ -73,18 +74,8 @@ class AnalysisEngine:
     # Stage 2: Multi-Dimensional Pattern Recognition
     def stage2_patterns(self, text: str, nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
         patterns = [asdict(p) for p in self.detector.detect(text)]
-        # Annotate nodes with coarse properties based on pattern coverage
         for n in nodes:
-            c = n.get("content", "")
-            c_l = c.lower()
-            if any(p["pattern_type"] == "normative" and self._span_in_text(p, text, c) for p in patterns):
-                n["reasoning_pattern"] = n.get("reasoning_pattern") or "Practical Reasoning"
-            if any(p["pattern_type"] == "causal" and self._span_in_text(p, text, c) for p in patterns):
-                n["reasoning_pattern"] = n.get("reasoning_pattern") or "Causal"
-            if re.search(r"\b(experts?|studies?|dr\.|prof)\b", c_l):
-                n["argument_scheme"] = n.get("argument_scheme") or "Argument from Expert Opinion"
-            if re.search(r"\b(like|similar to|analog)\b", c_l):
-                n["argument_scheme"] = n.get("argument_scheme") or "Argument from Analogy"
+            self.assigner.assign_comprehensive_properties(n, text, patterns)
         return {"patterns": patterns, "nodes": nodes}
 
     # Stage 3: Systematic Gap Analysis
@@ -110,12 +101,12 @@ class AnalysisEngine:
         return {"validation": issues, "narrative": narrative}
 
     # Public API
-    def analyze_comprehensive(self, text: str, context: AnalysisContext) -> Dict[str, Any]:
+    def _run_once(self, text: str, context: AnalysisContext) -> Dict[str, Any]:
         s1 = self.stage1_decompose(text)
-        s2 = self.stage2_patterns(text, s1["nodes"])  # nodes annotated
-        s3 = self.stage3_gaps(s2["patterns"], s2["nodes"])  # nodes with assumptions
-        s4 = self.stage4_probes(context, s2["patterns"])  # probe plan
-        s5 = self.stage5_integrate(text, s3["nodes"], s1["links"], s2["patterns"], s3["assumptions"])  # validation + narrative
+        s2 = self.stage2_patterns(text, s1["nodes"])
+        s3 = self.stage3_gaps(s2["patterns"], s2["nodes"])
+        s4 = self.stage4_probes(context, s2["patterns"])
+        s5 = self.stage5_integrate(text, s3["nodes"], s1["links"], s2["patterns"], s3["assumptions"])
         return {
             "context": asdict(context),
             "structure": {"nodes": s3["nodes"], "links": s1["links"]},
@@ -124,6 +115,35 @@ class AnalysisEngine:
             "probes": s4["probe_plan"],
             "integration": s5,
         }
+
+    def cross_validate_stages(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        pattern_types = {p.get("pattern_type") for p in analysis.get("patterns", [])}
+        nodes = analysis.get("structure", {}).get("nodes", [])
+        unmatched = []
+        for pt in pattern_types:
+            if not any(pt.lower() in ((n.get("reasoning_pattern") or "").lower()) for n in nodes):
+                unmatched.append(pt)
+        return {"needs_refinement": bool(unmatched), "unmatched_patterns": unmatched}
+
+    def refine_analysis(self, analysis: Dict[str, Any], validation: Dict[str, Any]) -> Dict[str, Any]:
+        nodes = analysis.get("structure", {}).get("nodes", [])
+        main = next((n for n in nodes if n.get("primary_subtype") == "Main Claim"), None)
+        if main:
+            for pt in validation.get("unmatched_patterns", []):
+                if not main.get("reasoning_pattern"):
+                    main["reasoning_pattern"] = pt.title()
+        return analysis
+
+    def analyze_comprehensive(self, text: str, context: AnalysisContext, max_iterations: int = 2) -> Dict[str, Any]:
+        analysis = self._run_once(text, context)
+        iteration = 0
+        while iteration < max_iterations:
+            validation = self.cross_validate_stages(analysis)
+            if not validation.get("needs_refinement"):
+                break
+            analysis = self.refine_analysis(analysis, validation)
+            iteration += 1
+        return analysis
 
     # Utilities
     def _split_sentences(self, text: str) -> List[str]:
