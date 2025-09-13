@@ -30,6 +30,8 @@ class AnalysisEngine:
         self.probes = ProbeOrchestrator(tools)
         self.profile: DomainProfile = PROFILES["general"]
         self.infer = InferenceEngine(ontology, self.profile)
+        # backward compatibility: expose inference engine as 'gap'
+        self.gap = self.infer
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:

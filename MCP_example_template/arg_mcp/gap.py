@@ -22,6 +22,15 @@ class RequirementResult:
     missing_premise: Optional[str] = None
 
 
+@dataclass
+class MissingAssumption:
+    """Legacy container for backward compatibility."""
+    text: str
+    category: str
+    rationale: str
+    priority: str  # critical, testable, controversial, other
+
+
 RequirementCheck = Callable[[str, Dict[str, str]], RequirementResult]
 
 
@@ -116,5 +125,4 @@ class InferenceEngine:
 
 
 # Backwards compatibility exports
-RequirementResult = RequirementResult
-InferenceEngine = InferenceEngine
+GapAnalyzer = InferenceEngine
