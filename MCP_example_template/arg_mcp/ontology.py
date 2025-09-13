@@ -6,6 +6,9 @@ import csv
 import os
 import math
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
 
 @dataclass
 class OntologyRow:
@@ -58,6 +61,15 @@ class Ontology:
                 self._bucket_index.setdefault(bkey, []).append(r)
             self._dim_index.setdefault(r.dimension, []).append(r)
 
+        # Pre-compute TF-IDF embeddings for semantic similarity
+        corpus = [" ".join([r.dimension, r.category, r.bucket, r.description, r.example, r.note]) for r in rows]
+        if corpus:
+            self._vectorizer = TfidfVectorizer().fit(corpus)
+            self._matrix = self._vectorizer.transform(corpus)
+        else:
+            self._vectorizer = TfidfVectorizer().fit([""])
+            self._matrix = self._vectorizer.transform([""])
+
     def list_dimensions(self) -> List[str]:
         return self.dimensions
 
@@ -108,34 +120,24 @@ class Ontology:
                 })
         return out
 
-    # Lightweight semantic similarity using normalized token Jaccard and TF scoring
-    def semantic_search(self, query: str, dimensions: Optional[List[str]] = None, threshold: float = 0.2, max_results: int = 10) -> List[Dict[str, Any]]:
-        def tokens(s: str) -> List[str]:
-            return [t for t in _normalize(s).replace("–","-").replace("—","-").replace(","," ").replace("."," ").split() if t]
-
-        q_tokens = tokens(query)
-        q_set = set(q_tokens)
+    # Semantic similarity using TF-IDF cosine similarity
+    def semantic_search(
+        self,
+        query: str,
+        dimensions: Optional[List[str]] = None,
+        threshold: float = 0.2,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        if not query.strip():
+            return []
+        vec = self._vectorizer.transform([query])
+        sims = cosine_similarity(vec, self._matrix)[0]
         results: List[Tuple[float, OntologyRow]] = []
-        for r in self.rows:
-            if dimensions and r.dimension not in dimensions:
+        for score, row in zip(sims, self.rows):
+            if dimensions and row.dimension not in dimensions:
                 continue
-            blob = " ".join([r.dimension, r.category, r.bucket, r.description, r.example, r.note])
-            tks = tokens(blob)
-            tset = set(tks)
-            if not tset:
-                continue
-            inter = len(q_set & tset)
-            uni = len(q_set | tset)
-            jacc = inter / uni if uni else 0.0
-            # simple TF weighting: more matches in bucket/description boosts score
-            score = jacc
-            if inter:
-                if _normalize(r.bucket) in q_set:
-                    score += 0.1
-                if any(t in _normalize(r.description) for t in q_set):
-                    score += 0.05
             if score >= threshold:
-                results.append((score, r))
+                results.append((float(score), row))
         results.sort(key=lambda x: x[0], reverse=True)
         out: List[Dict[str, Any]] = []
         for score, r in results[:max_results]:
@@ -148,6 +150,15 @@ class Ontology:
                 "example": r.example,
             })
         return out
+
+    def scheme_requirements(self, scheme: str) -> List[str]:
+        mapping = {
+            "Argument from Cause to Effect": ["temporal_order", "mechanism", "confound_control"],
+            "Argument from Analogy": ["similarity", "scope"],
+            "Argument from Expert Opinion": ["expertise", "bias", "consensus"],
+            "Practical Reasoning": ["goal_specified"],
+        }
+        return mapping.get(scheme, [])
 
 
 @dataclass
@@ -198,4 +209,3 @@ class ToolCatalog:
             if q in blob:
                 out.append({"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how})
         return out
-
