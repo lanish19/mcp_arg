@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Tuple, Dict, Any
+
+from .ontology import Ontology
 import uuid
 
 
@@ -126,4 +128,45 @@ class ArgumentLink:
         if not (0.0 <= float(self.confidence) <= 1.0):
             issues.append("confidence must be in [0,1]")
         return issues
+
+
+class NodePropertyAssigner:
+    """Assign ontology-informed properties across multiple dimensions to nodes."""
+
+    def __init__(self, ontology: Ontology) -> None:
+        self.ontology = ontology
+
+    def assign_comprehensive_properties(
+        self, node: Dict[str, Any], text_context: str, detected_patterns: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        dims = {
+            "claim_type": "Claim Type",
+            "evidence_type": "Evidence Type",
+            "reasoning_pattern": "Reasoning Pattern",
+            "cognitive_biases": "Cognitive Bias",
+            "fallacy_indicators": "Fallacy",
+        }
+        content = node.get("content", "")
+        for field, dim in dims.items():
+            res = self.ontology.semantic_search(content, dimensions=[dim], threshold=0.15, max_results=1)
+            if not res:
+                continue
+            bucket = res[0]["bucket"]
+            if field in ("cognitive_biases", "fallacy_indicators"):
+                node.setdefault(field, [])
+                if bucket not in node[field]:
+                    node[field].append(bucket)
+            else:
+                node[field] = bucket
+
+        # incorporate detected patterns as reasoning hints
+        if detected_patterns:
+            for p in detected_patterns:
+                if p.get("pattern_type") == "normative":
+                    node.setdefault("reasoning_pattern", "Practical Reasoning")
+                if p.get("pattern_type") == "causal":
+                    node.setdefault("reasoning_pattern", "Causal")
+
+        return node
+
 
