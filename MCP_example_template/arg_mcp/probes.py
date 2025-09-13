@@ -74,6 +74,7 @@ class ProbeOrchestrator:
                 meta = self.tools.get(name)
                 if meta:
                     probes.insert(0, meta)
+
         ranked = self.prioritize_by_context(
             probes,
             initial_findings.get("forum"),

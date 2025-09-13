@@ -195,3 +195,4 @@ class ArgumentGraph:
             "nodes": [n.to_dict() for n in self.nodes.values()],
             "edges": [e.to_dict() for e in self.edges],
         }
+

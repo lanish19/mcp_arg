@@ -68,6 +68,7 @@ class EnhancedPatternDetector:
             if ptype == "analogical" and " like " in text:
                 parts = text.split(" like ", 1)
                 roles = {"target": parts[0].strip(), "base": parts[1].strip()}
+
             out.append(
                 Pattern(
                     pattern_id=f"scheme_{i}",
@@ -77,6 +78,7 @@ class EnhancedPatternDetector:
                     confidence=float(score),
                     details={"scheme": row.category, "score": float(score)},
                     roles=roles,
+
                 )
             )
         out.sort(key=lambda p: p.confidence, reverse=True)

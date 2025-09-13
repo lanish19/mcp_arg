@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import re
 
 from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner, ArgumentGraph
+
 from .patterns import PatternDetector, Pattern
 from .gap import InferenceEngine
 from .ontology import Ontology, ToolCatalog
@@ -32,6 +33,7 @@ class AnalysisEngine:
         self.infer = InferenceEngine(ontology, self.profile)
         # backward compatibility: expose inference engine as 'gap'
         self.gap = self.infer
+
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:
@@ -152,6 +154,7 @@ class AnalysisEngine:
         s3 = self.stage3_infer(text, s2["patterns"])
         s4 = self.stage4_probes(context, s2["patterns"])
         s5 = self.stage5_integrate(text, s2["nodes"], s1["links"], s2["patterns"], s3)
+
         return {
             "context": asdict(context),
             "structure": {"nodes": s2["nodes"], "links": s1["links"]},

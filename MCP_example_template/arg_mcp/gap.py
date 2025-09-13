@@ -22,6 +22,7 @@ class RequirementResult:
     missing_premise: Optional[str] = None
 
 
+
 @dataclass
 class MissingAssumption:
     """Legacy container for backward compatibility."""
@@ -122,6 +123,7 @@ class InferenceEngine:
             req = Requirement(name, f"Domain-specific requirement {name}")
             return RequirementResult(req, False, 0.0, [text], f"Address {name}")
         return _inner
+
 
 
 # Backwards compatibility exports
