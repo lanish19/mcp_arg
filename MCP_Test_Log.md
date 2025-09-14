@@ -30,3 +30,17 @@ Date: 2025-09-14
   -
 - Fix ideas:
   -
+
+### Findings Update (Initial MCP-in-Cursor checks)
+- Good:
+  - Endpoints return envelopes with `version`, `data`, and `metadata.schema_url` as designed.
+  - Tool and ontology schemas exist and are referenced via `metadata.schema_url`.
+- Issues:
+  - Cursor MCP wrapper expects array outputs for certain tools (e.g., `ontology_list_dimensions`, `tools_list`), but server returns envelopes → validation error: output is not of type 'array'.
+  - Client wrapper rejected unexpected arguments: `count` for `ontology_semantic_search` and `tools_semantic_search` (Pydantic validation).
+  - Result: cannot fully exercise endpoints from Cursor until wrapper and server agree on payload shape.
+- Fix ideas:
+  - Add compatibility endpoints returning raw arrays (no envelope), e.g., `ontology_list_dimensions_raw`, `tools_list_raw`, `ontology_semantic_search_raw`, `tools_semantic_search_raw`.
+  - Alternatively, add a `compat=true` param to return bare `data`.
+  - Accept common aliases in signatures (e.g., `count` → `max_results`) to match client expectations.
+  - Update Cursor tool definitions (mcp.json) to reflect envelope responses or to unwrap `data`.
