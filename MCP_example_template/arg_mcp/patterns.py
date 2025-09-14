@@ -115,15 +115,11 @@ class EnhancedPatternDetector:
                     # Silent fallback continues below
                     pass
 
-            # Absolute fallback to first token in text to guarantee non-null span
+            # Absolute fallback to full text to guarantee non-null span
             if span is None:
-                import re as _re
-                m = _re.search(r"\w+", text)
-                if m:
-                    span = (m.start(), m.end())
-                else:
-                    # Ensure we never return [0,2] dummy span; use proportional
-                    span = (0, min(max(20, len(text)//10), len(text)))
+                # As a final fallback, use the span of the entire text.
+                # This is a broad but meaningful span, not a dummy one.
+                span = (0, len(text))
             out.append(
                 Pattern(
                     pattern_id=f"scheme_{i}",

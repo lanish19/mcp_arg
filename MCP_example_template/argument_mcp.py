@@ -248,16 +248,20 @@ def _handle_service_unavailable(retry_after: int = 30) -> Dict[str, Any]:
 
 
 @mcp.tool
-def ontology_list_dimensions(compat: Optional[Any] = None) -> List[str]:
+def ontology_list_dimensions(compat: Optional[Any] = None) -> Any:
     """List ontology dimensions (e.g., Argument Scheme, Fallacy, Cognitive Bias)."""
     start = time.perf_counter()
     dims = _ONTO.list_dimensions()
+    if _compat_enabled(compat):
+        _log_event("ontology_list_dimensions", start, 0, len(json.dumps(dims)))
+        return dims
+
     # include counts per dimension
     counts: Dict[str, int] = {}
     for d in dims:
         counts[d] = len(_ONTO.list_buckets(dimension=d))
     data = {"dimensions": [{"name": d, "count_buckets": counts.get(d, 0)} for d in dims]}
-    out = _maybe_envelope(data, "ontology_list_dimensions", compat=compat)
+    out = _envelope(data, _schema("ontology_list_dimensions"))
     _log_event("ontology_list_dimensions", start, 0, len(json.dumps(out)))
     return out
 
@@ -477,18 +481,9 @@ def health_status(compat: Optional[Any] = None) -> Dict[str, Any]:
         "status": "healthy" if dims and tool_count >= 0 else "degraded",
         "commit": os.environ.get("GIT_COMMIT", "unknown"),
     }
-    return _maybe_envelope(data, "tools_list", compat=compat)
+    return _maybe_envelope(data, "health_status", compat=compat)
 
 
-# Raw variant for compatibility with clients expecting arrays
-@mcp.tool
-def ontology_list_dimensions_raw() -> Any:
-    # Raw array version for maximum compatibility
-    try:
-        dims = _ONTO.list_dimensions()
-        return dims
-    except Exception:
-        return []
 
 
 @mcp.tool

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 import re
+import logging
 
 from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner, ArgumentGraph
 
@@ -39,22 +40,11 @@ class AnalysisEngine:
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:
-        # Simple segmentation heuristics with span tracking
-        sentences = self._split_sentences(text)
-        # Compute character spans for each sentence occurrence deterministically
-        spans = []
-        cursor = 0
-        for s in sentences:
-            idx = text.find(s, cursor)
-            if idx == -1:
-                # fallback search from start
-                idx = text.find(s)
-            if idx == -1:
-                start, end = 0, min(max(20, len(text)//10), len(text))
-            else:
-                start, end = idx, idx + len(s)
-                cursor = end
-            spans.append((start, end))
+        # Use EnhancedSpanTracker to get sentences with reliable spans from the start.
+        span_tracker = EnhancedSpanTracker(text)
+        sentences_with_spans = span_tracker._split_sentences_with_positions()
+        sentences = [s["text"] for s in sentences_with_spans]
+
         nodes: List[ArgumentNode] = []
         links: List[ArgumentLink] = []
 
@@ -69,23 +59,26 @@ class AnalysisEngine:
             concl_ix = len(sentences) - 1
 
         # Create nodes
-        for i, s in enumerate(sentences):
+        for i, s_info in enumerate(sentences_with_spans):
+            s = s_info["text"]
+            span = (s_info["start"], s_info["end"])
+
             if i == concl_ix:
                 n = ArgumentNode.make("STATEMENT", content=s.strip(), primary_subtype="Main Claim")
                 n.confidence = 0.7
             else:
-                # Mark premise if causal/normative keywords
-                if re.search(r"\b(because|since|should|ought|due to)\b", s, re.I):
+                # Mark premise or evidence based on keywords
+                if re.search(r"\b(study|studies|data|report|research|shows|suggests|indicates|according to)\b", s, re.I):
+                    n = ArgumentNode.make("STATEMENT", content=s.strip(), primary_subtype="Evidence")
+                    n.confidence = 0.65
+                elif re.search(r"\b(because|since|should|ought|due to)\b", s, re.I):
                     n = ArgumentNode.make("STATEMENT", content=s.strip(), primary_subtype="Premise")
                     n.confidence = 0.6
                 else:
                     n = ArgumentNode.make("STATEMENT", content=s.strip(), primary_subtype="Statement")
                     n.confidence = 0.5
-            # attach source span
-            try:
-                n.source_text_span = spans[i]
-            except Exception:
-                pass
+            # Attach source span directly. It is guaranteed to be meaningful.
+            n.source_text_span = span
             nodes.append(n)
 
         # Link premises to conclusion as SUPPORT (linked if they contain connective cues)
@@ -97,13 +90,7 @@ class AnalysisEngine:
                 link = ArgumentLink.make(n.node_id, target_id, "SUPPORT", relationship_subtype="convergent")
                 links.append(link)
 
-        # Ensure robust spans for all nodes
-        try:
-            span_tracker = EnhancedSpanTracker(text)
-            span_tracker.assign_node_spans([n.__dict__ for n in nodes])
-        except Exception:
-            # Best-effort; continue with existing spans
-            pass
+        # The span assignment is now robust and integrated, no need for the final check.
         return {"sentences": sentences, "nodes": [n.to_dict() for n in nodes], "links": [l.to_dict() for l in links]}
 
     # Stage 2: Multi-Dimensional Pattern Recognition
@@ -213,13 +200,13 @@ class AnalysisEngine:
             # Guard: ensure minimal required keys
             try:
                 graph.add_node(ArgumentNode.from_dict(n))
-            except Exception:
-                continue
+            except Exception as e:
+                logging.warning(f"Failed to add node from dict {n}: {e}", exc_info=True)
         for l in links:
             try:
-                graph.add_edge(ArgumentLink.from_dict(l))
-            except Exception:
-                continue
+                graph.add_link(ArgumentLink.from_dict(l))
+            except Exception as e:
+                logging.warning(f"Failed to add link from dict {l}: {e}", exc_info=True)
         for asm in infer_res["assumptions"]:
             a_text = asm if isinstance(asm, str) else (asm.get("text", "") if isinstance(asm, dict) else str(asm))
             if not a_text:
@@ -405,15 +392,6 @@ class EnhancedSpanTracker:
                 sentences.append({"text": tail, "start": current_pos, "end": len(self.text)})
         return sentences
 
-    def assign_node_spans(self, nodes: List[Dict[str, Any]]) -> None:
-        for n in nodes:
-            content = n.get("content", "")
-            sp = self._find_content_span(content)
-            if sp:
-                n["source_text_span"] = [sp[0], sp[1]]
-            else:
-                n["source_text_span"] = self._assign_fallback_span(content)
-
     def _find_content_span(self, content: str) -> Optional[Tuple[int, int]]:
         if not content:
             return None
@@ -436,7 +414,8 @@ class EnhancedSpanTracker:
             windows.append(win)
             positions.append((i, i + window_size))
         if not windows:
-            return (0, min(max(20, len(self.text)//10), len(self.text)))
+            # Fallback for empty text or very short text
+            return (0, len(self.text))
         try:
             vec = TfidfVectorizer().fit([content] + windows)
             mat = vec.transform([content] + windows)
@@ -445,15 +424,6 @@ class EnhancedSpanTracker:
             if float(sims[best]) > 0.3:
                 return positions[best]
         except Exception:
+            # If TF-IDF fails, we return None and let the caller decide on the ultimate fallback.
             pass
-        return self._assign_fallback_span(content)
-
-    def _assign_fallback_span(self, content: str) -> List[int]:
-        text_len = len(self.text)
-        if text_len == 0:
-            return [0, 0]
-        ratio = min(len(content) / text_len if content else 0.1, 0.8)
-        start = int(text_len * 0.1)
-        span_len = max(int(text_len * ratio), 20)
-        end = min(start + span_len, text_len)
-        return [start, end]
+        return None

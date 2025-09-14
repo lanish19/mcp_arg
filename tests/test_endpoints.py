@@ -7,6 +7,8 @@ from MCP_example_template.argument_mcp import (
     map_assumptions_to_nodes,
     export_graph,
     analyze_and_probe,
+    health_status,
+    ontology_list_dimensions,
 )
 
 
@@ -42,6 +44,27 @@ class TestEndpoints(unittest.TestCase):
         d = self._data(env)
         self.assertIn('structure', d)
         self.assertIn('probe_plan', d)
+
+    def test_health_status_ok_and_schema_compliant(self):
+        res = health_status()
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["metadata"]["schema_url"], "schemas/v1/health_status.response.json")
+        data = res["data"]
+        self.assertEqual(data["status"], "healthy")
+        self.assertGreater(data["tool_count"], 0)
+        self.assertIn("version", data)
+        self.assertIn("uptime_ms", data)
+        self.assertIn("dimensions", data)
+        self.assertIn("ontology_bucket_counts", data)
+        self.assertIn("commit", data)
+
+    def test_ontology_list_dimensions_compat_mode(self):
+        res = ontology_list_dimensions(compat="raw")
+        self.assertIsInstance(res, list)
+        self.assertIn("Argument Scheme", res)
+        self.assertIn("Fallacy", res)
+        # Ensure it's just a list of strings
+        self.assertTrue(all(isinstance(x, str) for x in res))
 
 
 if __name__ == '__main__':

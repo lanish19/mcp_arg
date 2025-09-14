@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "health_status.response",
+  "type": "object",
+  "required": ["version", "data", "metadata", "error"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "The version of the API."
+    },
+    "data": {
+      "type": ["object", "null"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "The version of the service."
+        },
+        "uptime_ms": {
+          "type": "integer",
+          "description": "Service uptime in milliseconds."
+        },
+        "dimensions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of ontology dimensions available."
+        },
+        "tool_count": {
+          "type": "integer",
+          "description": "Number of available tools."
+        },
+        "ontology_bucket_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "A map of dimension names to the number of buckets in each."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["healthy", "degraded"],
+          "description": "The overall health status of the service."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The git commit hash of the running service."
+        }
+      },
+      "required": [
+        "version",
+        "uptime_ms",
+        "dimensions",
+        "tool_count",
+        "ontology_bucket_counts",
+        "status",
+        "commit"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "error": {
+      "type": ["object", "null"]
+    }
+  }
+}
