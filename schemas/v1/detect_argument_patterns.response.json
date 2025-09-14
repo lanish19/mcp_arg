@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "detect_argument_patterns.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": "object",
+      "required": ["patterns", "next_tools"],
+      "properties": {
+        "patterns": {"type": "array"},
+        "next_tools": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+
+

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "map_assumptions_to_nodes.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": "object",
+      "properties": {
+        "strategy": {"type": "string"},
+        "mappings": {"type": "array", "items": {"type": "object"}},
+        "unmapped": {"type": "array"}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+
+

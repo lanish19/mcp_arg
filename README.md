@@ -87,7 +87,9 @@ python MCP_example_template/argument_mcp.py
 - `ontology_pattern_match(argument_patterns, match_type?)` — Pattern-to-ontology mapping
 
 ### Analysis Tools
-- `analyze_argument_comprehensive(argument_text, forum?, audience?, goal?, analysis_depth?)` — Complete argument analysis
+- `analyze_argument_stepwise(argument_text, steps?, forum?, audience?, goal?, max_steps?)` — Recommended stage-by-stage pipeline with chaining hints
+- `analyze_argument_comprehensive(argument_text, forum?, audience?, goal?, analysis_depth?)` — Complete argument analysis (prefer stepwise for chaining)
+- `analyze_and_probe(argument_text, analysis_depth?, audience?, goal?)` — One-shot combined analysis + probes
 - `decompose_argument_structure(argument_text, include_implicit?)` — Structural breakdown
 - `detect_argument_patterns(argument_text, pattern_types?)` — Pattern detection with confidence scores
 - `generate_missing_assumptions(argument_components, prioritization?)` — Assumption generation
@@ -99,6 +101,21 @@ python MCP_example_template/argument_mcp.py
 - `tools_search(query)` — Search probe tool catalog
 - `tools_get(name)` — Get specific probe tool details
 - `orchestrate_probe_analysis(analysis_results, forum?, audience?, goal?)` — Dynamic probe selection
+- `map_assumptions_to_nodes(analysis_results, assumptions[], strategy?)` — Map assumptions to nodes
+- `export_graph(graph, format)` — Export as Mermaid, Graphviz, or JSON-LD
+### Response Envelope (v1.1.0)
+
+All tool responses are wrapped:
+```json
+{
+  "version": "v1.1.0",
+  "data": { /* payload */ },
+  "metadata": { "schema_url": "schemas/v1/<endpoint>.response.json", "warnings": [], "next_steps": [] },
+  "error": null
+}
+```
+
+Errors use structured codes (e.g., `INVALID_INPUT_SHAPE`, `UNSUPPORTED_FORMAT`).
 
 ### Graph Analysis
 - `construct_argument_graph(analysis_results)` — Build argument graphs with adjacency
@@ -170,3 +187,67 @@ This project is open source and available under the MIT License.
 ---
 
 *This repository provides a comprehensive toolkit for argumentation analysis using the Model Context Protocol framework.*
+
+### Recommended multi-step pipeline
+
+Call `analyze_argument_stepwise(argument_text)` to obtain stage-by-stage outputs and chaining hints.
+
+Default steps:
+1) decompose_argument_structure
+2) detect_argument_patterns
+3) ontology_pattern_match
+4) generate_missing_assumptions
+5) orchestrate_probe_analysis
+6) construct_argument_graph
+7) validate_argument_graph
+8) assess_argument_quality
+9) identify_reasoning_weaknesses
+10) generate_counter_analysis
+
+Minimal example:
+```python
+from MCP_example_template.argument_mcp import analyze_argument_stepwise
+
+res = analyze_argument_stepwise("Experts say we should ban X because it causes harm.")
+print(len(res["stages"]))
+```
+
+Example of a stage object (`stages[0]`):
+```json
+{
+  "name": "decompose_argument_structure",
+  "inputs_summary": {"argument_text": "Experts say we should ban X because it causes harm."},
+  "key_outputs": {"nodes": 3, "links": 2},
+  "next_tools": ["detect_argument_patterns", "ontology_pattern_match"]
+}
+```
+
+## API Envelope and Schemas (v1.1.0)
+
+All tools return a versioned envelope:
+
+- version: API version string
+- data: tool-specific payload (or null on error)
+- metadata: includes schema_url, warnings, next_steps, and optional meta
+- error: structured error object {code, message, hint?, where?}
+
+Responses refer to JSON Schemas in `schemas/v1/` for validation.
+
+## Error Codes
+
+- INVALID_INPUT_SHAPE: inputs wrong type/shape
+- MISSING_ARGUMENT_TEXT: empty or missing argument_text
+- TOOL_NOT_FOUND: tool not present in catalog
+- UNSUPPORTED_FORMAT: export format not supported
+- INTERNAL_ERROR: unexpected runtime error
+
+## New/Updated Endpoints
+
+- decompose_argument_structure: returns structure + inline patterns and next_tools
+- detect_argument_patterns: returns compact patterns with source_text_span
+- generate_missing_assumptions: returns enriched assumptions (impact, confidence, tests)
+- validate_argument_graph: adds duplicate/cycle checks and suggestions
+- identify_reasoning_weaknesses: links weaknesses to node_ids via span overlap
+- map_assumptions_to_nodes: supports strategy=best-match|strict and unmapped reasons
+- export_graph: Mermaid/Graphviz colored by subtype; JSON-LD with @type
+- tools_search: supports tag filters via `tags:any:x,y` or `tags:all:x,y`

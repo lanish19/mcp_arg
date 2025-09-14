@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "analyze_argument_stepwise.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": "object",
+      "required": ["stages", "final_artifacts"],
+      "properties": {
+        "stages": {"type": "array"},
+        "final_artifacts": {"type": "object"},
+        "truncated": {"type": ["boolean", "null"]}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+

@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "assess_argument_quality.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": ["object", "null"],
+      "properties": {
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "weaknesses": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+
+

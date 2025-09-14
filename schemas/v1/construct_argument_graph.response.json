@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "construct_argument_graph.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": "object",
+      "required": ["nodes", "links", "adjacency", "next_tools"],
+      "properties": {
+        "nodes": {"type": "array"},
+        "links": {"type": "array"},
+        "adjacency": {"type": "object"},
+        "next_tools": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+
+

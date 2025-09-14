@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "decompose_argument_structure.response",
+  "type": "object",
+  "required": ["version", "data", "metadata"],
+  "properties": {
+    "version": {"type": "string"},
+    "data": {
+      "type": "object",
+      "required": ["structure", "patterns", "next_tools"],
+      "properties": {
+        "structure": {"type": "object"},
+        "patterns": {"type": "array"},
+        "next_tools": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "metadata": {"type": "object"},
+    "error": {"type": ["object", "null"]}
+  }
+}
+

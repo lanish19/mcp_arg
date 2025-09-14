@@ -53,9 +53,25 @@ class ArgumentNode:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        # Normalize span
         if self.source_text_span is not None:
             d["source_text_span"] = list(self.source_text_span)
-        return d
+        # Truncate content to keep payload compact
+        if isinstance(d.get("content"), str) and len(d["content"]) > 200:
+            d["content"] = d["content"][:200] + "…"
+        # Drop empty/None/default fields
+        pruned: Dict[str, Any] = {}
+        for k, v in d.items():
+            if v is None:
+                continue
+            if isinstance(v, list) and not v:
+                continue
+            if isinstance(v, str) and v == "" and k not in ("node_id", "node_type", "primary_subtype", "content"):
+                continue
+            if k == "confidence" and isinstance(v, (int, float)) and abs(float(v) - 0.5) < 1e-12:
+                continue
+            pruned[k] = v
+        return pruned
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "ArgumentNode":
@@ -107,7 +123,18 @@ class ArgumentLink:
         return ArgumentLink(link_id=_gen_id("L"), source_node=source_node, target_node=target_node, relationship_type=relationship_type, relationship_subtype=relationship_subtype)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # Drop empty/None/default fields
+        pruned: Dict[str, Any] = {}
+        for k, v in d.items():
+            if v is None:
+                continue
+            if isinstance(v, list) and not v:
+                continue
+            if k in ("strength", "confidence") and isinstance(v, (int, float)) and abs(float(v) - 0.5) < 1e-12:
+                continue
+            pruned[k] = v
+        return pruned
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "ArgumentLink":
@@ -148,7 +175,8 @@ class NodePropertyAssigner:
         }
         content = node.get("content", "")
         for field, dim in dims.items():
-            res = self.ontology.semantic_search(content, dimensions=[dim], threshold=0.15, max_results=1)
+            # Tighten threshold and only take very confident single match
+            res = self.ontology.semantic_search(content, dimensions=[dim], threshold=0.45, max_results=1)
             if not res:
                 continue
             bucket = res[0]["bucket"]
@@ -161,7 +189,7 @@ class NodePropertyAssigner:
 
         # incorporate detected patterns as reasoning hints
         if detected_patterns:
-            for p in detected_patterns:
+            for p in detected_patterns[:2]:  # use top-2 only
                 if p.get("pattern_type") == "normative":
                     node.setdefault("reasoning_pattern", "Practical Reasoning")
                 if p.get("pattern_type") == "causal":

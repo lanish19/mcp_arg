@@ -1,0 +1,23 @@
+{
+  "$id": "Node",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Node",
+  "type": "object",
+  "required": ["node_id", "node_type", "content"],
+  "properties": {
+    "node_id": {"type": "string"},
+    "node_type": {"type": "string"},
+    "primary_subtype": {"type": ["string", "null"]},
+    "content": {"type": "string"},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "source_text_span": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+        {"type": "object", "properties": {"start": {"type": "integer"}, "end": {"type": "integer"}}, "required": ["start", "end"]}
+      ]
+    },
+    "assumptions": {"type": "array", "items": {"type": "string"}}
+  }
+}
+

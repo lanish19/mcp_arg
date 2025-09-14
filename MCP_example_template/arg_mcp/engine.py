@@ -23,10 +23,10 @@ class AnalysisContext:
 
 
 class AnalysisEngine:
-    def __init__(self, ontology: Ontology, tools: ToolCatalog) -> None:
+    def __init__(self, ontology: Ontology, tools: ToolCatalog, pattern_top_n: int = 5) -> None:
         self.ontology = ontology
         self.tools = tools
-        self.detector = PatternDetector(ontology)
+        self.detector = PatternDetector(ontology, top_n=pattern_top_n)
         self.assigner = NodePropertyAssigner(ontology)
         self.probes = ProbeOrchestrator(tools)
         self.profile: DomainProfile = PROFILES["general"]
@@ -37,8 +37,22 @@ class AnalysisEngine:
 
     # Stage 1: Structural Decomposition
     def stage1_decompose(self, text: str) -> Dict[str, Any]:
-        # Simple segmentation heuristics
+        # Simple segmentation heuristics with span tracking
         sentences = self._split_sentences(text)
+        # Compute character spans for each sentence occurrence deterministically
+        spans = []
+        cursor = 0
+        for s in sentences:
+            idx = text.find(s, cursor)
+            if idx == -1:
+                # fallback search from start
+                idx = text.find(s)
+            if idx == -1:
+                start, end = 0, min(len(s), len(text))
+            else:
+                start, end = idx, idx + len(s)
+                cursor = end
+            spans.append((start, end))
         nodes: List[ArgumentNode] = []
         links: List[ArgumentLink] = []
 
@@ -65,6 +79,11 @@ class AnalysisEngine:
                 else:
                     n = ArgumentNode.make("STATEMENT", content=s.strip(), primary_subtype="Statement")
                     n.confidence = 0.5
+            # attach source span
+            try:
+                n.source_text_span = spans[i]
+            except Exception:
+                pass
             nodes.append(n)
 
         # Link premises to conclusion as SUPPORT (linked if they contain connective cues)
@@ -80,37 +99,95 @@ class AnalysisEngine:
 
     # Stage 2: Multi-Dimensional Pattern Recognition
     def stage2_patterns(self, text: str, nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
-        patterns = [asdict(p) for p in self.detector.detect(text)]
+        raw = self.detector.detect(text)
+        patterns = []
+        for p in raw:
+            d = asdict(p)
+            # Preserve source span
+            if d.get("span") is not None:
+                sp = d.pop("span")
+                d["source_text_span"] = [sp[0], sp[1]]
+            if not d.get("roles"):
+                d.pop("roles", None)
+            if isinstance(d.get("confidence"), float):
+                d["confidence"] = round(float(d["confidence"]), 3)
+            # Keep only minimal details
+            details = d.get("details") or {}
+            if isinstance(details, dict):
+                d["details"] = {k: details[k] for k in ("scheme", "score") if k in details}
+            patterns.append(d)
         for n in nodes:
             self.assigner.assign_comprehensive_properties(n, text, patterns)
         return {"patterns": patterns, "nodes": nodes}
 
     # Stage 3: Systematic Gap Analysis
     def stage3_infer(self, text: str, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
-        evaluations = []
-        assumptions = []
-        for p in patterns:
+        evaluations: List[Dict[str, Any]] = []
+        enriched_assumptions: List[Dict[str, Any]] = []
+        # Heuristic mapping for tests suggestions and impact
+        def tests_for(scheme: str) -> List[str]:
+            s = (scheme or "").lower()
+            if "cause" in s:
+                return ["timeline_check", "mechanism_specification", "confound_audit"]
+            if "expert" in s or "authority" in s:
+                return ["credential_verification", "bias_disclosure", "consensus_scan"]
+            if "analogy" in s:
+                return ["similarity_dimensions_spec", "scope_limitations"]
+            if "practical" in s or "policy" in s:
+                return ["goal_clarity", "cost_benefit_outline"]
+            return ["evidence_request"]
+
+        def impact_for(ptype: str) -> str:
+            if ptype in ("causal", "authority"):
+                return "high"
+            if ptype in ("analogical", "normative"):
+                return "med"
+            return "low"
+
+        for p in patterns[:5]:
             p = dict(p)
-            p.setdefault("scheme", p.get("details", {}).get("scheme") or p.get("label"))
+            p.setdefault("scheme", (p.get("details") or {}).get("scheme") or p.get("label"))
             p.setdefault("text", text)
             eval_res = self.infer.evaluate_scheme(p)
             evaluations.append(
                 {
                     "scheme": eval_res.scheme,
-                    "confidence": eval_res.confidence,
+                    "confidence": round(float(eval_res.confidence), 3),
                     "requirements": [
                         {
                             "name": r.requirement.name,
                             "satisfied": r.satisfied,
-                            "score": r.score,
+                            "score": round(float(r.score), 3),
                             "missing_premise": r.missing_premise,
                         }
                         for r in eval_res.requirements
                     ],
                 }
             )
-            assumptions.extend(eval_res.generated_assumptions)
-        return {"evaluations": evaluations, "assumptions": assumptions}
+            # Build enriched assumptions
+            ptype = p.get("pattern_type") or ""
+            linked = [p.get("pattern_id")] if p.get("pattern_id") else []
+            for atext in eval_res.generated_assumptions:
+                if not atext:
+                    continue
+                enriched_assumptions.append(
+                    {
+                        "text": atext,
+                        "linked_patterns": linked,
+                        "impact": impact_for(ptype),
+                        "confidence": round(float(eval_res.confidence), 3),
+                        "tests": tests_for(p.get("scheme") or ""),
+                    }
+                )
+        # Deduplicate by text while preserving order
+        seen_texts = set()
+        deduped: List[Dict[str, Any]] = []
+        for a in enriched_assumptions:
+            t = a.get("text")
+            if t and t not in seen_texts:
+                deduped.append(a)
+                seen_texts.add(t)
+        return {"evaluations": evaluations, "assumptions": deduped}
 
     # Stage 4: Dynamic Probe Orchestration
     def stage4_probes(self, context: AnalysisContext, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -122,18 +199,35 @@ class AnalysisEngine:
     def stage5_integrate(self, text: str, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]], patterns: List[Dict[str, Any]], infer_res: Dict[str, Any]) -> Dict[str, Any]:
         graph = ArgumentGraph()
         for n in nodes:
-            graph.add_node(ArgumentNode.from_dict(n))
+            # Guard: ensure minimal required keys
+            try:
+                graph.add_node(ArgumentNode.from_dict(n))
+            except Exception:
+                continue
         for l in links:
-            graph.add_edge(ArgumentLink.from_dict(l))
+            try:
+                graph.add_edge(ArgumentLink.from_dict(l))
+            except Exception:
+                continue
         for asm in infer_res["assumptions"]:
-            a_node = ArgumentNode.make("STATEMENT", content=asm, primary_subtype="Assumption")
+            a_text = asm if isinstance(asm, str) else (asm.get("text", "") if isinstance(asm, dict) else str(asm))
+            if not a_text:
+                continue
+            a_node = ArgumentNode.make("STATEMENT", content=a_text, primary_subtype="Assumption")
             graph.add_node(a_node)
         structure_issues = graph.validate_structure()
         claims = [n.get("content", "") for n in nodes]
         conflicts = check_factual_consistency(claims)
         senti_issues = check_sentiment_coherence(claims)
         plaus = [check_plausibility(a) for a in infer_res["assumptions"]]
-        narrative = self._build_narrative(text, nodes, patterns, [{"text": a} for a in infer_res["assumptions"]])
+        # Normalize assumptions payload for narrative builder
+        narr_assumptions: List[Dict[str, Any]] = []
+        for a in infer_res["assumptions"]:
+            if isinstance(a, dict):
+                narr_assumptions.append({"text": a.get("text", ""), "category": a.get("impact", "")})
+            else:
+                narr_assumptions.append({"text": str(a)})
+        narrative = self._build_narrative(text, nodes, patterns, narr_assumptions)
         return {
             "graph": graph.to_json(),
             "validation": {
@@ -205,17 +299,47 @@ class AnalysisEngine:
 
     def _validate_graph(self, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]]) -> Dict[str, Any]:
         node_ids = {n["node_id"] for n in nodes}
-        issues = {"dangling_links": [], "isolated_nodes": []}
+        issues: Dict[str, Any] = {"dangling_links": [], "isolated_nodes": [], "duplicate_edges": [], "cycles": []}
+        seen_edges = set()
+        adj: Dict[str, List[str]] = {nid: [] for nid in node_ids}
         for l in links:
-            if l["source_node"] not in node_ids or l["target_node"] not in node_ids:
-                issues["dangling_links"].append(l["link_id"])
+            s = l.get("source_node"); t = l.get("target_node"); lid = l.get("link_id")
+            if s not in node_ids or t not in node_ids:
+                if lid:
+                    issues["dangling_links"].append(lid)
+                continue
+            key = (s, t, l.get("link_type"))
+            if key in seen_edges:
+                if lid:
+                    issues["duplicate_edges"].append(lid)
+            else:
+                seen_edges.add(key)
+            adj.setdefault(s, []).append(t)
         # simple isolation check
         connected = set()
         for l in links:
-            connected.add(l["source_node"]); connected.add(l["target_node"])
+            if l.get("source_node") in node_ids and l.get("target_node") in node_ids:
+                connected.add(l["source_node"]); connected.add(l["target_node"])
         for n in nodes:
             if n["node_id"] not in connected:
                 issues["isolated_nodes"].append(n["node_id"])
+        # cycle detection (DFS)
+        visited: Dict[str, int] = {}
+        stack: Dict[str, bool] = {}
+        cycle_found: List[List[str]] = []
+        def dfs(u: str, path: List[str]):
+            visited[u] = 1; stack[u] = True
+            for v in adj.get(u, []):
+                if v not in visited:
+                    dfs(v, path + [v])
+                elif stack.get(v):
+                    cycle_found.append(path + [v])
+            stack[u] = False
+        for nid in node_ids:
+            if nid not in visited:
+                dfs(nid, [nid])
+        if cycle_found:
+            issues["cycles"] = cycle_found[:3]
         return issues
 
     def _build_narrative(self, text: str, nodes: List[Dict[str, Any]], patterns: List[Dict[str, Any]], assumptions: List[Dict[str, Any]]) -> str:

@@ -5,6 +5,28 @@ from typing import List, Dict, Optional, Any, Tuple
 import csv
 import os
 import math
+def _sanitize(s: str) -> str:
+    if s is None:
+        return ""
+    # Normalize quotes and whitespace
+    t = s.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+    t = " ".join(t.split())
+    return t
+
+def _slugify(name: str) -> str:
+    import re
+    s = (name or "").lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s
+
+# Simple synonyms map for normalization
+SYNONYMS: Dict[str, str] = {
+    "false trilemma": "false dilemma",
+    "trilemma": "false dilemma",
+    "appeal to authority": "ad verecundiam",
+    "appeal to popularity": "ad populum",
+    "post hoc": "post hoc ergo propter hoc",
+}
 
 from .tfidf import TfidfVectorizer, cosine_similarity
 
@@ -32,12 +54,12 @@ def load_ontology(path: str) -> List[OntologyRow]:
         for r in reader:
             rows.append(
                 OntologyRow(
-                    dimension=(r.get("Dimension") or "").strip(),
-                    category=(r.get("Category") or "").strip(),
-                    bucket=(r.get("Bucket") or "").strip(),
-                    description=(r.get("Description") or "").strip(),
-                    example=(r.get("Example") or "").strip(),
-                    note=(r.get("NOTE") or "").strip(),
+                    dimension=_sanitize((r.get("Dimension") or "").strip()),
+                    category=_sanitize((r.get("Category") or "").strip()),
+                    bucket=_sanitize((r.get("Bucket") or "").strip()),
+                    description=_sanitize((r.get("Description") or "").strip()),
+                    example=_sanitize((r.get("Example") or "").strip()),
+                    note=_sanitize((r.get("NOTE") or "").strip()),
                 )
             )
     return rows
@@ -68,6 +90,7 @@ class Ontology:
         else:
             self._vectorizer = TfidfVectorizer().fit([""])
             self._matrix = self._vectorizer.transform([""])
+        self._last_applied_synonyms: List[Tuple[str, str]] = []
 
     def list_dimensions(self) -> List[str]:
         return self.dimensions
@@ -98,7 +121,13 @@ class Ontology:
         return out
 
     def search(self, query: str, dimension: Optional[str] = None, category: Optional[str] = None, bucket: Optional[str] = None) -> List[Dict[str, str]]:
-        q = _normalize(query)
+        q_raw = _normalize(query)
+        applied: List[Tuple[str, str]] = []
+        q = q_raw
+        if q_raw in SYNONYMS:
+            q = _normalize(SYNONYMS[q_raw])
+            applied.append((q_raw, q))
+        self._last_applied_synonyms = applied
         out: List[Dict[str, str]] = []
         for r in self.rows:
             if dimension and r.dimension != dimension:
@@ -124,12 +153,20 @@ class Ontology:
         self,
         query: str,
         dimensions: Optional[List[str]] = None,
-        threshold: float = 0.2,
-        max_results: int = 10,
+        threshold: float = 0.35,
+        max_results: int = 5,
     ) -> List[Dict[str, Any]]:
         if not query.strip():
             return []
-        vec = self._vectorizer.transform([query])
+        q_raw = query
+        applied: List[Tuple[str, str]] = []
+        q_use = q_raw
+        norm = _normalize(q_raw)
+        if norm in SYNONYMS:
+            q_use = SYNONYMS[norm]
+            applied.append((q_raw, q_use))
+        self._last_applied_synonyms = applied
+        vec = self._vectorizer.transform([q_use])
         sims = cosine_similarity(vec, self._matrix)[0]
         results: List[Tuple[float, OntologyRow]] = []
         for score, row in zip(sims, self.rows):
@@ -149,6 +186,9 @@ class Ontology:
                 "example": r.example,
             })
         return out
+
+    def last_applied_synonyms(self) -> List[Tuple[str, str]]:
+        return list(self._last_applied_synonyms)
 
     def scheme_requirements(self, scheme: str) -> List[str]:
         mapping = {
@@ -190,21 +230,122 @@ class ToolCatalog:
     def __init__(self, rows: List[ToolRow]):
         self.rows = rows
         self._name_index: Dict[str, ToolRow] = {r.name.lower(): r for r in rows if r.name}
+        self._slug_index: Dict[str, ToolRow] = {_slugify(r.name): r for r in rows if r.name}
+        # derive tags per tool
+        self._tags: Dict[str, List[str]] = {}
+        for r in rows:
+            tags: List[str] = []
+            n = (r.name or "").lower()
+            w = (r.when or "").lower() + " " + (r.purpose or "").lower() + " " + (r.how or "").lower()
+            # Phase/theme heuristics
+            if any(k in w for k in ["assumption", "linchpin", "audit"]):
+                tags.append("assumption")
+            if any(k in w for k in ["causal", "confound", "mechanism", "quasi-experimental"]):
+                tags.append("causal")
+            if any(k in w for k in ["toulmin", "warrant", "claim"]):
+                tags.append("structure")
+            if any(k in w for k in ["triangulation", "replication", "validation"]):
+                tags.append("validation")
+            if any(k in n for k in ["dilemma", "disassembler"]):
+                tags.append("dilemma")
+            self._tags[_slugify(r.name)] = sorted(list(set(tags)))
+        # Build semantic index over tools (name + purpose + how + when)
+        docs = [
+            _normalize(" ".join([t.name or "", t.purpose or "", t.how or "", t.when or ""]))
+            for t in rows
+        ]
+        if docs:
+            self._tool_vectorizer = TfidfVectorizer().fit(docs)
+            self._tool_matrix = self._tool_vectorizer.transform(docs)
+        else:
+            self._tool_vectorizer = TfidfVectorizer().fit([""])
+            self._tool_matrix = self._tool_vectorizer.transform([""])
 
     def list(self) -> List[str]:
-        return sorted(self._name_index.keys())
+        return sorted([r.name for r in self._name_index.values()])
 
     def get(self, name: str) -> Optional[Dict[str, str]]:
-        r = self._name_index.get(name.lower())
+        if not name:
+            return None
+        r = self._name_index.get(name.lower()) or self._slug_index.get(_slugify(name))
         if not r:
             return None
-        return {"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how}
+        slug = _slugify(r.name)
+        return {"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how, "slug": slug, "tags": self._tags.get(slug, [])}
 
     def search(self, query: str) -> List[Dict[str, str]]:
         q = _normalize(query)
+        # tag filter syntax: tags:any:a,b  OR tags:all:x,y
+        tag_any: List[str] = []
+        tag_all: List[str] = []
+        if q.startswith("tags:"):
+            try:
+                _, expr = q.split(":", 1)
+                mode, rest = expr.split(":", 1)
+                tags = [t.strip() for t in rest.split(",") if t.strip()]
+                if mode == "any":
+                    tag_any = tags
+                elif mode == "all":
+                    tag_all = tags
+            except Exception:
+                pass
         out: List[Dict[str, str]] = []
         for r in self.rows:
+            slug = _slugify(r.name)
+            tags = self._tags.get(slug, [])
+            if tag_any or tag_all:
+                if tag_any and not any(t in tags for t in tag_any):
+                    continue
+                if tag_all and not all(t in tags for t in tag_all):
+                    continue
+                out.append({"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how, "slug": slug, "tags": tags})
+                continue
             blob = _normalize("\n".join([r.when, r.name, r.purpose, r.how]))
             if q in blob:
-                out.append({"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how})
+                out.append({"name": r.name, "when": r.when, "purpose": r.purpose, "how": r.how, "slug": slug, "tags": tags})
+        return out
+
+    def semantic_search_tools(self, query: str, threshold: float = 0.1, max_results: int = 10) -> List[Dict[str, Any]]:
+        if not isinstance(query, str) or not query.strip():
+            return []
+        q = _normalize(query)
+        vec = self._tool_vectorizer.transform([q])
+        sims = cosine_similarity(vec, self._tool_matrix)[0]
+        scored: List[Tuple[float, ToolRow]] = []
+        for score, row in zip(sims, self.rows):
+            if score >= threshold:
+                scored.append((float(score), row))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out: List[Dict[str, Any]] = []
+        for score, r in scored[:max_results]:
+            slug = _slugify(r.name)
+            out.append({
+                "score": round(float(score), 4),
+                "name": r.name,
+                "when": r.when,
+                "purpose": r.purpose,
+                "how": r.how,
+                "slug": slug,
+                "tags": self._tags.get(slug, []),
+            })
+        return out
+
+    def dump(self, page: int = 1, per_page: int = 50, fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        page = max(1, int(page or 1))
+        per_page = max(1, min(200, int(per_page or 50)))
+        start = (page - 1) * per_page
+        end = start + per_page
+        cols = fields or ["name", "when", "purpose", "how", "slug", "tags"]
+        out: List[Dict[str, Any]] = []
+        for r in self.rows[start:end]:
+            slug = _slugify(r.name)
+            row = {
+                "name": r.name,
+                "when": r.when,
+                "purpose": r.purpose,
+                "how": r.how,
+                "slug": slug,
+                "tags": self._tags.get(slug, []),
+            }
+            out.append({k: row[k] for k in cols if k in row})
         return out

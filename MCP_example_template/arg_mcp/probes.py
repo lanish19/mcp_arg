@@ -69,6 +69,22 @@ class ProbeOrchestrator:
         # Build a conditional chain of probe suggestions
         patterns = initial_findings.get("patterns", [])
         probes = self.select_probes_by_pattern(patterns)
+        # Thematic rulelets based on textual cues
+        text_blob = " ".join([initial_findings.get("forum") or "", initial_findings.get("audience") or "", initial_findings.get("goal") or ""]).lower()
+        pattern_texts = []
+        for p in patterns:
+            # harvest any available snippets from roles
+            r = p.get("roles") or {}
+            pattern_texts.append(" ".join([str(v) for v in r.values()]))
+        text_blob += (" " + " ".join(pattern_texts)).lower()
+        def add_tool(name: str):
+            meta = self.tools.get(name)
+            if meta:
+                probes.append(meta)
+        if any(k in text_blob for k in ["either or", "either/or", "two options", "no other choice", "three ways"]):
+            add_tool("Dilemma Disassembler™")
+        if any(k in text_blob for k in ["frozen conflict", "stalemate", "leadership vacuum", "power vacuum", "instability"]):
+            add_tool("Stability & Conflict Stress Test™")
         if profile is not None:
             for name in profile.preferred_probes:
                 meta = self.tools.get(name)
@@ -87,9 +103,38 @@ class ProbeOrchestrator:
             step = {
                 "tool": p,
                 "when": "after " + prev if prev else "initial",
-                "rationale": "Selected by detected pattern and forum weighting.",
+                "rationale": "Selected by detected pattern, thematic cues, and forum weighting.",
             }
             sequence.append(step)
             prev = p["name"]
-        return sequence
+        # Ensure non-empty defaults and cap length
+        if not sequence:
+            fallback = [
+                self.tools.get("Assumption Audit™ and Key Assumptions Scrubber™"),
+                self.tools.get("Triangulation Method Fusion™"),
+                self.tools.get("The Contextual Relevance Check™"),
+            ]
+            sequence = [{"tool": p, "when": "initial", "rationale": "Default probe"} for p in fallback if p]
+        # Attach targets if nodes present
+        nodes = (initial_findings.get("structure") or {}).get("nodes") or []
+        target_ids = [n.get("node_id") for n in nodes if n.get("primary_subtype") in ("Main Claim", "Premise")]
+        for s in sequence:
+            s.setdefault("targets", target_ids[:5])
+            # Attach why/how based on the selected tool metadata
+            tmeta = s.get("tool") or {}
+            s.setdefault("why", tmeta.get("purpose"))
+            s.setdefault("how", tmeta.get("how"))
+        # Cap to max 5
+        return sequence[:5]
+
+    def ranked_candidates(self, queries: List[str], max_results: int = 10) -> List[Dict[str, Any]]:
+        # Delegate to ToolCatalog semantic search and merge results
+        scored: Dict[str, Dict[str, Any]] = {}
+        for q in queries:
+            res = self.tools.semantic_search_tools(q, threshold=0.12, max_results=max_results)
+            for r in res:
+                key = r["slug"]
+                if key not in scored or r["score"] > scored[key]["score"]:
+                    scored[key] = r
+        return sorted(scored.values(), key=lambda x: x["score"], reverse=True)[:max_results]
 
