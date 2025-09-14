@@ -138,3 +138,118 @@ class ProbeOrchestrator:
                     scored[key] = r
         return sorted(scored.values(), key=lambda x: x["score"], reverse=True)[:max_results]
 
+
+class ContextAwareProbeOrchestrator:
+    def __init__(self, tool_catalog: ToolCatalog) -> None:
+        self.tool_catalog = tool_catalog
+        self.pattern_probe_map = {
+            "authority": ["The Authority Credential Checker™", "The Consensus Vote Optimizer™"],
+            "causal": ["The Causal Probe Playbook™", "The Mill's Methods Card Player™"],
+            "analogical": ["The Analogy Fidelity Filter™", "The Structured Analogy Generator™"],
+            "dilemmatic": ["The False Dilemma Detector™", "The Creative Synthesis Generator™"],
+        }
+
+    def _get_tool(self, name: str) -> Dict[str, Any]:
+        return self.tool_catalog.get(name) or {}
+
+    def _find_overlapping_nodes(self, span: list, nodes: list) -> list:
+        if not isinstance(span, list) or len(span) != 2:
+            return []
+        a = (int(span[0]), int(span[1]))
+        out = []
+        for n in nodes or []:
+            sp = n.get("source_text_span")
+            if isinstance(sp, list) and len(sp) == 2:
+                b = (int(sp[0]), int(sp[1]))
+                if a[0] < b[1] and b[0] < a[1]:
+                    out.append(n)
+        return out
+
+    def _select_pattern_probes(self, pattern: Dict[str, Any], structure: Dict[str, Any]) -> list:
+        ptype = pattern.get("pattern_type", "other")
+        nodes = (structure or {}).get("nodes", [])
+        targets = [n.get("node_id") for n in self._find_overlapping_nodes(pattern.get("source_text_span"), nodes)]
+        picks: list = []
+        if ptype == "authority":
+            picks.append({
+                "tool": self._get_tool("The Authority Credential Checker™"),
+                "when": "immediate",
+                "rationale": "Authority-based argument detected - verify credibility",
+                "targets": targets,
+                "priority": "high",
+            })
+        elif ptype == "causal":
+            picks.append({
+                "tool": self._get_tool("The Causal Probe Playbook™"),
+                "when": "immediate",
+                "rationale": "Causal claim detected - test mechanism and alternatives",
+                "targets": targets,
+                "priority": "high",
+            })
+        elif ptype == "analogical":
+            picks.append({
+                "tool": self._get_tool("The Analogy Fidelity Filter™"),
+                "when": "immediate",
+                "rationale": "Analogy detected - test similarity boundaries",
+                "targets": targets,
+                "priority": "medium",
+            })
+        return [p for p in picks if p.get("tool")]
+
+    def _has_limited_options_cues(self, text: str) -> bool:
+        cues = ["three ways", "two options", "either/or", "only choice", "must choose", "no alternative", "either we", "only way"]
+        return any(cue in (text or "").lower() for cue in cues)
+
+    def _has_geopolitical_cues(self, text: str) -> bool:
+        cues = ["leadership vacuum", "power vacuum", "geopolitical", "rogue actors", "global order", "instability", "crisis"]
+        L = (text or "").lower()
+        return any(c in L for c in cues)
+
+    def _has_quantitative_cues(self, text: str) -> bool:
+        import re
+        pats = [r"\d+%", r"\d+\.\d+", r"\$\d+", r"\d+ times", r"increase.*\d+", r"decrease.*\d+", r"statistics show"]
+        return any(re.search(p, text or "", re.I) for p in pats)
+
+    def _select_context_probes(self, analysis_results: Dict[str, Any], forum: Optional[str], audience: Optional[str], goal: Optional[str]) -> list:
+        probes: list = []
+        text = analysis_results.get("text", "")
+        if self._has_limited_options_cues(text):
+            tool = self._get_tool("The False Dilemma Detector™")
+            if tool:
+                probes.append({"tool": tool, "when": "immediate", "rationale": "Limited options presented", "targets": [], "priority": "high"})
+        if self._has_geopolitical_cues(text):
+            tool = self._get_tool("The Second-Order Consequence Mapper™")
+            if tool:
+                probes.append({"tool": tool, "when": "followup", "rationale": "Geopolitical context - analyze downstream consequences", "targets": [], "priority": "medium"})
+        if self._has_quantitative_cues(text):
+            tool = self._get_tool("The Base Rate Reality Anchor™")
+            if tool:
+                probes.append({"tool": tool, "when": "immediate", "rationale": "Quantitative claims - ground in baselines", "targets": [], "priority": "medium"})
+        return probes
+
+    def _dedupe_rank(self, items: list) -> list:
+        seen = set()
+        out = []
+        for it in items:
+            key = (it.get("tool", {}).get("slug"), it.get("rationale"))
+            if key not in seen and it.get("tool"):
+                out.append(it)
+                seen.add(key)
+        return out
+
+    def generate_probe_plan(self, analysis_results: Dict[str, Any], forum: Optional[str] = None, audience: Optional[str] = None, goal: Optional[str] = None) -> Dict[str, Any]:
+        patterns = analysis_results.get("patterns", [])
+        structure = analysis_results.get("structure", {})
+        weaknesses = analysis_results.get("weaknesses", [])
+        plan: list = []
+        for p in patterns:
+            plan.extend(self._select_pattern_probes(p, structure))
+        plan.extend(self._select_context_probes(analysis_results, forum, audience, goal))
+        plan = self._dedupe_rank(plan)
+        # Add top semantic candidates as reference
+        queries: list = []
+        for p in patterns:
+            queries.append(" ".join([p.get("pattern_type", ""), (p.get("details") or {}).get("scheme", ""), p.get("label", "")]))
+        candidates = self.tool_catalog.semantic_search_tools(" ".join(queries), threshold=0.12, max_results=10)
+        return {"probe_plan": plan[:5], "candidates": candidates}
+

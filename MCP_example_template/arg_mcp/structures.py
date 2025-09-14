@@ -202,18 +202,18 @@ class NodePropertyAssigner:
 @dataclass
 class ArgumentGraph:
     nodes: Dict[str, ArgumentNode] = field(default_factory=dict)
-    edges: List[ArgumentLink] = field(default_factory=list)
+    links: List[ArgumentLink] = field(default_factory=list)
 
     def add_node(self, node: ArgumentNode) -> None:
         self.nodes[node.node_id] = node
 
     def add_edge(self, edge: ArgumentLink) -> None:
-        self.edges.append(edge)
+        self.links.append(edge)
 
     def validate_structure(self) -> List[str]:
         issues: List[str] = []
         ids = set(self.nodes)
-        for e in self.edges:
+        for e in self.links:
             if e.source_node not in ids or e.target_node not in ids:
                 issues.append(f"dangling edge {e.link_id}")
         return issues
@@ -221,6 +221,5 @@ class ArgumentGraph:
     def to_json(self) -> Dict[str, Any]:
         return {
             "nodes": [n.to_dict() for n in self.nodes.values()],
-            "edges": [e.to_dict() for e in self.edges],
+            "links": [e.to_dict() for e in self.links],
         }
-

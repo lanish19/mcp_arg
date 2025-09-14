@@ -1,0 +1,16 @@
+{
+  "$id": "Link",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Link",
+  "type": "object",
+  "required": ["link_id", "source_node", "target_node", "relationship_type"],
+  "properties": {
+    "link_id": {"type": "string", "pattern": "^L_[a-f0-9]{8}$"},
+    "source_node": {"type": "string", "pattern": "^N_[a-f0-9]{8}$"},
+    "target_node": {"type": "string", "pattern": "^N_[a-f0-9]{8}$"},
+    "relationship_type": {"type": "string", "enum": ["SUPPORT", "ATTACK", "REBUT", "UNDERCUT"]},
+    "relationship_subtype": {"type": ["string", "null"]}
+  }
+}
+
+

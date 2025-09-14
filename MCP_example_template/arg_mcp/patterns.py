@@ -122,7 +122,8 @@ class EnhancedPatternDetector:
                 if m:
                     span = (m.start(), m.end())
                 else:
-                    span = (0, min(1, len(text)))
+                    # Ensure we never return [0,2] dummy span; use proportional
+                    span = (0, min(max(20, len(text)//10), len(text)))
             out.append(
                 Pattern(
                     pattern_id=f"scheme_{i}",

@@ -128,3 +128,128 @@ class InferenceEngine:
 
 # Backwards compatibility exports
 GapAnalyzer = InferenceEngine
+
+
+# ---- Assumption Generator (pattern-driven) ----
+class AssumptionGenerator:
+    def __init__(self, ontology=None) -> None:
+        self.ontology = ontology
+
+    def _authority(self, pattern: Dict[str, str]) -> List[Dict[str, str]]:
+        pid = pattern.get("pattern_id")
+        return [
+            {
+                "text": "The cited experts are qualified in the relevant domain",
+                "category": "epistemic",
+                "impact": "high",
+                "confidence": 0.8,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Check expert credentials and affiliations",
+                    "Verify domain relevance of expertise",
+                    "Review publication history and recognition",
+                ],
+            },
+            {
+                "text": "The experts are free from conflicts of interest",
+                "category": "reliability",
+                "impact": "high",
+                "confidence": 0.7,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Identify funding sources",
+                    "Assess organizational or ideological pressures",
+                    "Compare to independent expert views",
+                ],
+            },
+            {
+                "text": "There is expert consensus on this topic",
+                "category": "consensus",
+                "impact": "medium",
+                "confidence": 0.6,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Survey experts",
+                    "Check professional organization positions",
+                    "Review meta-analyses",
+                ],
+            },
+        ]
+
+    def _causal(self, pattern: Dict[str, str]) -> List[Dict[str, str]]:
+        pid = pattern.get("pattern_id")
+        return [
+            {
+                "text": "The cause precedes the effect temporally",
+                "category": "temporal",
+                "impact": "critical",
+                "confidence": 0.9,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Verify chronological sequence",
+                    "Check for reverse causation",
+                    "Assess temporal gaps",
+                ],
+            },
+            {
+                "text": "No alternative causes adequately explain the effect",
+                "category": "alternative_causation",
+                "impact": "high",
+                "confidence": 0.7,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Identify and test alternatives",
+                    "Check for confounders",
+                    "Use controlled comparisons",
+                ],
+            },
+            {
+                "text": "A plausible mechanism links cause to effect",
+                "category": "mechanistic",
+                "impact": "high",
+                "confidence": 0.8,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "Identify intermediate steps",
+                    "Test mechanism under conditions",
+                    "Compare to analogous mechanisms",
+                ],
+            },
+        ]
+
+    def _analogical(self, pattern: Dict[str, str]) -> List[Dict[str, str]]:
+        pid = pattern.get("pattern_id")
+        return [
+            {
+                "text": "The analogy hinges on relevant similarities, not superficial ones",
+                "category": "bridging",
+                "impact": "medium",
+                "confidence": 0.6,
+                "linked_patterns": [pid] if pid else [],
+                "tests": [
+                    "List key relevant similarities",
+                    "List critical disanalogies",
+                    "Test boundary conditions",
+                ],
+            }
+        ]
+
+    def generate(self, text: str, patterns: List[Dict[str, str]], components: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        for p in patterns:
+            ptype = (p.get("pattern_type") or "").lower()
+            if ptype == "authority":
+                out.extend(self._authority(p))
+            elif ptype == "causal":
+                out.extend(self._causal(p))
+            elif ptype == "analogical":
+                out.extend(self._analogical(p))
+        # Simple dedupe by text
+        seen = set()
+        uniq: List[Dict[str, str]] = []
+        for a in out:
+            t = a.get("text")
+            if t and t not in seen:
+                uniq.append(a)
+                seen.add(t)
+        return uniq

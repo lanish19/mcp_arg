@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "analyze_argument_comprehensive.request",
+  "type": "object",
+  "required": ["argument_text"],
+  "properties": {
+    "argument_text": {"type": "string", "minLength": 10, "maxLength": 50000},
+    "analysis_depth": {"type": "string", "enum": ["basic", "standard", "comprehensive"], "default": "standard"},
+    "forum": {"type": ["string", "null"], "enum": ["academic", "policy", "legal", "informal", null]},
+    "audience": {"type": ["string", "null"], "enum": ["expert", "general", "student", null]},
+    "goal": {"type": ["string", "null"], "enum": ["analysis", "critique", "decision_support", null]}
+  },
+  "additionalProperties": false
+}
+

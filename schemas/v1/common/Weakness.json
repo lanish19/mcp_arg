@@ -1,0 +1,26 @@
+{
+  "$id": "Weakness",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Weakness",
+  "type": "object",
+  "required": ["label", "why", "how"],
+  "properties": {
+    "label": {"type": "string", "minLength": 1},
+    "type": {"type": ["string", "null"], "enum": ["logical", "epistemic", "rhetorical", "methodological", null]},
+    "severity": {"type": ["string", "null"], "enum": ["low", "medium", "high", "critical", null]},
+    "why": {"type": "string", "minLength": 1},
+    "how": {"type": "string", "minLength": 1},
+    "node_ids": {"type": "array", "items": {"type": "string", "pattern": "^N_[a-f0-9]{8}$"}},
+    "span": {
+      "type": ["array", "null"],
+      "items": {"type": "integer", "minimum": 0},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "ontology_bucket": {"type": ["string", "null"]},
+    "evidence_hooks": {"type": "array", "items": {"type": "string"}}
+  }
+}
+
+

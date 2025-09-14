@@ -7,9 +7,9 @@ import re
 from .structures import ArgumentNode, ArgumentLink, NodePropertyAssigner, ArgumentGraph
 
 from .patterns import PatternDetector, Pattern
-from .gap import InferenceEngine
+from .gap import InferenceEngine, AssumptionGenerator
 from .ontology import Ontology, ToolCatalog
-from .probes import ProbeOrchestrator
+from .probes import ProbeOrchestrator, ContextAwareProbeOrchestrator
 from .domain_profiles import PROFILES, DomainProfile
 from .validation import check_factual_consistency, check_sentiment_coherence, check_plausibility
 
@@ -29,8 +29,10 @@ class AnalysisEngine:
         self.detector = PatternDetector(ontology, top_n=pattern_top_n)
         self.assigner = NodePropertyAssigner(ontology)
         self.probes = ProbeOrchestrator(tools)
+        self.context_probes = ContextAwareProbeOrchestrator(tools)
         self.profile: DomainProfile = PROFILES["general"]
         self.infer = InferenceEngine(ontology, self.profile)
+        self.assumption_generator = AssumptionGenerator(ontology)
         # backward compatibility: expose inference engine as 'gap'
         self.gap = self.infer
 
@@ -48,7 +50,7 @@ class AnalysisEngine:
                 # fallback search from start
                 idx = text.find(s)
             if idx == -1:
-                start, end = 0, min(len(s), len(text))
+                start, end = 0, min(max(20, len(text)//10), len(text))
             else:
                 start, end = idx, idx + len(s)
                 cursor = end
@@ -95,6 +97,13 @@ class AnalysisEngine:
                 link = ArgumentLink.make(n.node_id, target_id, "SUPPORT", relationship_subtype="convergent")
                 links.append(link)
 
+        # Ensure robust spans for all nodes
+        try:
+            span_tracker = EnhancedSpanTracker(text)
+            span_tracker.assign_node_spans([n.__dict__ for n in nodes])
+        except Exception:
+            # Best-effort; continue with existing spans
+            pass
         return {"sentences": sentences, "nodes": [n.to_dict() for n in nodes], "links": [l.to_dict() for l in links]}
 
     # Stage 2: Multi-Dimensional Pattern Recognition
@@ -164,7 +173,7 @@ class AnalysisEngine:
                     ],
                 }
             )
-            # Build enriched assumptions
+            # Build enriched assumptions based on evaluation plus pattern-driven generator
             ptype = p.get("pattern_type") or ""
             linked = [p.get("pattern_id")] if p.get("pattern_id") else []
             for atext in eval_res.generated_assumptions:
@@ -179,6 +188,8 @@ class AnalysisEngine:
                         "tests": tests_for(p.get("scheme") or ""),
                     }
                 )
+        # Add assumption candidates directly from patterns for coverage
+        enriched_assumptions.extend(self.assumption_generator.generate(text, patterns, None))
         # Deduplicate by text while preserving order
         seen_texts = set()
         deduped: List[Dict[str, Any]] = []
@@ -190,10 +201,10 @@ class AnalysisEngine:
         return {"evaluations": evaluations, "assumptions": deduped}
 
     # Stage 4: Dynamic Probe Orchestration
-    def stage4_probes(self, context: AnalysisContext, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
-        initial = {"patterns": patterns, "forum": context.forum, "audience": context.audience, "goal": context.goal}
-        chain = self.probes.chain_probes_conditionally(initial, profile=self.profile)
-        return {"probe_plan": chain}
+    def stage4_probes(self, context: AnalysisContext, patterns: List[Dict[str, Any]], structure: Optional[Dict[str, Any]] = None, weaknesses: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        analysis_results = {"patterns": patterns, "structure": structure or {}, "weaknesses": weaknesses or [], "text": ""}
+        plan = self.context_probes.generate_probe_plan(analysis_results, forum=context.forum, audience=context.audience, goal=context.goal)
+        return plan
 
     # Stage 5: Integration and Validation
     def stage5_integrate(self, text: str, nodes: List[Dict[str, Any]], links: List[Dict[str, Any]], patterns: List[Dict[str, Any]], infer_res: Dict[str, Any]) -> Dict[str, Any]:
@@ -219,7 +230,14 @@ class AnalysisEngine:
         claims = [n.get("content", "") for n in nodes]
         conflicts = check_factual_consistency(claims)
         senti_issues = check_sentiment_coherence(claims)
-        plaus = [check_plausibility(a) for a in infer_res["assumptions"]]
+        # Compute plausibility on assumption text, not raw dicts
+        plaus = []
+        for a in infer_res["assumptions"]:
+            a_text = a if isinstance(a, str) else (a.get("text", "") if isinstance(a, dict) else str(a))
+            if a_text:
+                plaus.append(check_plausibility(a_text))
+            else:
+                plaus.append((0.5, "unknown"))
         # Normalize assumptions payload for narrative builder
         narr_assumptions: List[Dict[str, Any]] = []
         for a in infer_res["assumptions"]:
@@ -246,7 +264,7 @@ class AnalysisEngine:
         s1 = self.stage1_decompose(text)
         s2 = self.stage2_patterns(text, s1["nodes"])
         s3 = self.stage3_infer(text, s2["patterns"])
-        s4 = self.stage4_probes(context, s2["patterns"])
+        s4 = self.stage4_probes(context, s2["patterns"], structure={"nodes": s2["nodes"], "links": s1["links"]})
         s5 = self.stage5_integrate(text, s2["nodes"], s1["links"], s2["patterns"], s3)
 
         return {
@@ -308,7 +326,7 @@ class AnalysisEngine:
                 if lid:
                     issues["dangling_links"].append(lid)
                 continue
-            key = (s, t, l.get("link_type"))
+            key = (s, t, l.get("relationship_type"))
             if key in seen_edges:
                 if lid:
                     issues["duplicate_edges"].append(lid)
@@ -365,3 +383,77 @@ class AnalysisEngine:
                 lines.append(f"- {a['text']}" + (f" ({cat})" if cat else ""))
         return "\n".join(lines)
 
+
+class EnhancedSpanTracker:
+    def __init__(self, text: str) -> None:
+        self.text = text or ""
+
+    def _split_sentences_with_positions(self) -> List[Dict[str, Any]]:
+        import re as _re
+        sentences: List[Dict[str, Any]] = []
+        current_pos = 0
+        pattern = r"[.!?]+\s+"
+        for m in _re.finditer(pattern, self.text):
+            end_pos = m.start() + 1
+            segment = self.text[current_pos:end_pos].strip()
+            if segment:
+                sentences.append({"text": segment, "start": current_pos, "end": end_pos})
+            current_pos = m.end()
+        if current_pos < len(self.text):
+            tail = self.text[current_pos:].strip()
+            if tail:
+                sentences.append({"text": tail, "start": current_pos, "end": len(self.text)})
+        return sentences
+
+    def assign_node_spans(self, nodes: List[Dict[str, Any]]) -> None:
+        for n in nodes:
+            content = n.get("content", "")
+            sp = self._find_content_span(content)
+            if sp:
+                n["source_text_span"] = [sp[0], sp[1]]
+            else:
+                n["source_text_span"] = self._assign_fallback_span(content)
+
+    def _find_content_span(self, content: str) -> Optional[Tuple[int, int]]:
+        if not content:
+            return None
+        start = self.text.find(content)
+        if start >= 0:
+            return (start, start + len(content))
+        start = self.text.lower().find(content.lower())
+        if start >= 0:
+            return (start, start + len(content))
+        return self._fuzzy_span_match(content)
+
+    def _fuzzy_span_match(self, content: str) -> Optional[Tuple[int, int]]:
+        from .tfidf import TfidfVectorizer, cosine_similarity
+        window_size = max(20, min(len(content) or 20, len(self.text)))
+        windows: List[str] = []
+        positions: List[Tuple[int, int]] = []
+        step = max(5, window_size // 4)
+        for i in range(0, max(1, len(self.text) - window_size + 1), step):
+            win = self.text[i:i + window_size]
+            windows.append(win)
+            positions.append((i, i + window_size))
+        if not windows:
+            return (0, min(max(20, len(self.text)//10), len(self.text)))
+        try:
+            vec = TfidfVectorizer().fit([content] + windows)
+            mat = vec.transform([content] + windows)
+            sims = cosine_similarity(mat[0], mat[1:]).flatten()
+            best = int(sims.argmax()) if hasattr(sims, "argmax") else 0
+            if float(sims[best]) > 0.3:
+                return positions[best]
+        except Exception:
+            pass
+        return self._assign_fallback_span(content)
+
+    def _assign_fallback_span(self, content: str) -> List[int]:
+        text_len = len(self.text)
+        if text_len == 0:
+            return [0, 0]
+        ratio = min(len(content) / text_len if content else 0.1, 0.8)
+        start = int(text_len * 0.1)
+        span_len = max(int(text_len * ratio), 20)
+        end = min(start + span_len, text_len)
+        return [start, end]
